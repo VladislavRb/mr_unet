@@ -33,8 +33,8 @@ class MRSpectrogramDatasetLoader(Dataset):
         clean_path = os.path.join(self.clean_dir, audio_filename)
         noisy_path = os.path.join(self.noisy_dir, audio_filename)
 
-        clean_spec = np.load(clean_path, allow_pickle=True)
-        noisy_spec = np.load(noisy_path, allow_pickle=True)
+        clean_spec = np.load(clean_path)
+        noisy_spec = np.load(noisy_path)
 
         clean_audio_chunk = clean_spec[:, offset:offset + self.segment_frames, :]
         noisy_audio_chunk = noisy_spec[:, offset:offset + self.segment_frames, :]
@@ -59,8 +59,8 @@ class MRSpectrogramDatasetLoader(Dataset):
             if os.path.isdir(noisy_path) or not noisy_path.endswith('.npy'):
                 continue
 
-            clean_spec = np.load(clean_path, allow_pickle=True)
-            noisy_spec = np.load(noisy_path, allow_pickle=True)
+            clean_spec = np.load(clean_path)
+            noisy_spec = np.load(noisy_path)
             if clean_spec.shape != noisy_spec.shape:
                 skipped_files.append(npy_filename)
                 continue
