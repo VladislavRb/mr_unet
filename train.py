@@ -7,7 +7,7 @@ import torch.optim as optim
 from tqdm import tqdm
 from types import SimpleNamespace
 from torch.utils.data import DataLoader
-from torch.cuda.amp import autocast, GradScaler
+from torch.amp import autocast, GradScaler
 import torch.distributed as dist
 import torch.multiprocessing as mp
 from torch.nn.parallel import DistributedDataParallel
@@ -127,7 +127,7 @@ def train(model: MultiStage_denoise | DistributedDataParallel,
             noisy = torch.tensor(noisy, dtype=torch.float32).to(device)
             clean = torch.tensor(clean, dtype=torch.float32).to(device)
 
-            with autocast(enabled=(scaler is not None)):
+            with autocast(device_type=device.type, enabled=(scaler is not None)):
                 output = model(noisy)
                 loss = calculate_loss(output, clean, l1_loss, stft_loss, use_stage1_loss)
 
@@ -152,7 +152,7 @@ def train(model: MultiStage_denoise | DistributedDataParallel,
                 noisy = torch.tensor(noisy, dtype=torch.float32).to(device)
                 clean = torch.tensor(clean, dtype=torch.float32).to(device)
 
-                with autocast(enabled=(scaler is not None)):
+                with autocast(device_type=device.type, enabled=(scaler is not None)):
                     output = model(noisy)
                     loss = calculate_loss(output, clean, l1_loss, stft_loss, use_stage1_loss)
 
@@ -338,7 +338,7 @@ def main_distributed(rank, world_size, args):
         model.load_state_dict(torch.load(args.pretrained_path, map_location=device))
 
     model.to(device)
-    model = DistributedDataParallel(model, device_ids=[rank] if is_cuda else None)
+    model = DistributedDataParallel(model, device_ids=[rank] if is_cuda else None, find_unused_parameters=True)
 
     train(
         model=model,
