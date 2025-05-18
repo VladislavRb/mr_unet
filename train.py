@@ -74,6 +74,10 @@ def calculate_loss(output,
     return loss
 
 
+def unwrap_model(model):
+    return model.module if hasattr(model, 'module') else model
+
+
 def train(model: MultiStage_denoise | DistributedDataParallel,
           train_loader: DataLoader,
           val_loader: DataLoader,
@@ -86,7 +90,8 @@ def train(model: MultiStage_denoise | DistributedDataParallel,
           saved_checkpoints_folder: str,
           saved_metrics_json_path: str,
           use_stage1_loss: bool = True):
-    frozen_blocks = freeze_encoder_blocks(model, freeze_until_idx=3)
+    model_ = unwrap_model(model)
+    frozen_blocks = freeze_encoder_blocks(model_, freeze_until_idx=3)
 
     scaler = GradScaler() if device.type == 'cuda' else None
 
@@ -116,7 +121,7 @@ def train(model: MultiStage_denoise | DistributedDataParallel,
 
     for epoch in range(epochs):
         model.train()
-        model.sam_callback(epoch)
+        model_.sam_callback(epoch)
         total_loss = 0
 
         for noisy, clean in tqdm(train_loader, desc=f'[Epoch {epoch+1}/{epochs}]'):
