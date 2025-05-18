@@ -121,7 +121,6 @@ def train(model: MultiStage_denoise | DistributedDataParallel,
 
     for epoch in range(epochs):
         model.train()
-        model_.sam_callback(epoch)
         total_loss = 0
 
         for noisy, clean in tqdm(train_loader, desc=f'[Epoch {epoch+1}/{epochs}]'):

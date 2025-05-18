@@ -281,8 +281,6 @@ class MultiStage_denoise(nn.Module):
             self.encoder_s2 = Encoder(2 * self.Ns[0], self.Ns, self.Ss, unet_args)
             self.decoder_s2 = Decoder(self.Ns, self.Ss, unet_args)
 
-        self.skip_sam_on_forward = True
-
     def forward(self, inputs):
         if self.use_fencoding:
             x_w_freq = self.freq_encoding(inputs)  # None, None, 1025, 12
@@ -297,7 +295,7 @@ class MultiStage_denoise(nn.Module):
 
         feats_s1 = self.decoder_s1(x, contracting_layers_s1)  # None, None, 1025, 32 features
 
-        if self.num_stages > 1 and not self.skip_sam_on_forward:
+        if self.num_stages > 1:
             # SAM module
             Fout, pred_stage_1 = self.sam_1(feats_s1, inputs)
 
@@ -317,15 +315,6 @@ class MultiStage_denoise(nn.Module):
         else:
             pred_stage_1 = self.finalblock(feats_s1)
             return pred_stage_1
-
-    def sam_callback(self, epoch):
-        if epoch == 4:
-            self.skip_sam_on_forward = False
-            for param in self.sam_1.parameters():
-                param.requires_grad = False
-        elif epoch == 6:
-            for param in self.sam_1.parameters():
-                param.requires_grad = True
 
 
 class I_Block(nn.Module):
