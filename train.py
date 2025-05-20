@@ -38,6 +38,9 @@ def get_unet_args():
 
 
 def freeze_encoder_blocks(model: MultiStage_denoise, freeze_until_idx: int):
+    if freeze_until_idx == 0:
+        return []
+
     print(f'Freezing encoder blocks [0..{freeze_until_idx - 1}]')
     frozen_blocks = []
 
@@ -84,14 +87,15 @@ def train(model: MultiStage_denoise | DistributedDataParallel,
           epochs: int,
           lr: float,
           weight_decay: float,
-          early_stopping_patience: int,
+          frozen_patience: int,
           patience_after_all_unfrozen: int,
           device: torch.device,
           saved_checkpoints_folder: str,
           saved_metrics_json_path: str,
+          fine_tune: bool,
           use_stage1_loss: bool = True):
     model_ = unwrap_model(model)
-    frozen_blocks = freeze_encoder_blocks(model_, freeze_until_idx=3)
+    frozen_blocks = freeze_encoder_blocks(model_, freeze_until_idx=3 if fine_tune else 0)
 
     scaler = GradScaler() if device.type == 'cuda' else None
 
@@ -171,11 +175,10 @@ def train(model: MultiStage_denoise | DistributedDataParallel,
             saved_checkpoint_counter += 1
             print(f'Saved best model → {checkpoint_filepath}')
         else:
-            patience_counter += 1
-            print(f'Patience: {patience_counter}/{early_stopping_patience}')
-
-            if frozen_blocks and patience_counter >= early_stopping_patience:
-                if current_unfreeze_index < len(frozen_blocks):
+            if current_unfreeze_index < len(frozen_blocks):
+                patience_counter += 1
+                print(f'Patience: {patience_counter}/{frozen_patience}')
+                if patience_counter >= frozen_patience:
                     block = frozen_blocks[current_unfreeze_index]
                     for param in block.parameters():
                         param.requires_grad = True
@@ -183,12 +186,12 @@ def train(model: MultiStage_denoise | DistributedDataParallel,
                     print(f'Unfroze block {current_unfreeze_index} at epoch {epoch + 1}')
                     current_unfreeze_index += 1
                     patience_counter = 0
-                else:
-                    final_patience_counter += 1
-                    print(f'Final patience: {final_patience_counter}/{patience_after_all_unfrozen}')
-                    if final_patience_counter >= patience_after_all_unfrozen:
-                        print(f'Early stopping: no improvement for {patience_after_all_unfrozen} epochs')
-                        break
+            else:
+                final_patience_counter += 1
+                print(f'Final patience: {final_patience_counter}/{patience_after_all_unfrozen}')
+                if final_patience_counter >= patience_after_all_unfrozen:
+                    print(f'Early stopping: no improvement for {patience_after_all_unfrozen} epochs')
+                    break
 
         scheduler.step(avg_val_loss)
 
@@ -212,7 +215,7 @@ def parse_args():
     parser.add_argument("--batch_size", type=int, default=4)
     parser.add_argument("--lr", type=float, default=1e-5)
     parser.add_argument("--weight_decay", type=float, default=1e-5)
-    parser.add_argument("--early_stopping_patience", type=int, default=5)
+    parser.add_argument("--frozen_patience", type=int, default=5)
     parser.add_argument("--patience_after_all_unfrozen", type=int, default=5)
 
     parser.add_argument("--segment_frames", type=float, default=258)
@@ -220,6 +223,7 @@ def parse_args():
 
     parser.add_argument("--use_stage1_loss", action="store_true")
     parser.add_argument("--distributed", action="store_true")
+    parser.add_argument("--fine_tune", action="store_true")
 
     parser.add_argument("--train_dataset_clean_dir", type=str)
     parser.add_argument("--train_dataset_noisy_dir", type=str)
@@ -261,7 +265,7 @@ def main(args):
     unet_args = get_unet_args()
     model = MultiStage_denoise(unet_args=unet_args)
 
-    if os.path.exists(args.pretrained_path):
+    if args.fine_tune and os.path.exists(args.pretrained_path):
         print(f'Loading pre-trained weights from: {args.pretrained_path}')
         model.load_state_dict(torch.load(args.pretrained_path, map_location=device))
 
@@ -273,11 +277,12 @@ def main(args):
         epochs=args.epochs,
         lr=args.lr,
         weight_decay=args.weight_decay,
-        early_stopping_patience=args.early_stopping_patience,
+        frozen_patience=args.frozen_patience,
         patience_after_all_unfrozen=args.patience_after_all_unfrozen,
         device=device,
         saved_checkpoints_folder=args.saved_checkpoints_folder,
         saved_metrics_json_path=args.saved_metrics_json_path,
+        fine_tune=args.fine_tune,
         use_stage1_loss=args.use_stage1_loss
     )
 
@@ -333,7 +338,7 @@ def main_distributed(rank, world_size, args):
     unet_args = get_unet_args()
     model = MultiStage_denoise(unet_args=unet_args)
 
-    if os.path.exists(args.pretrained_path):
+    if args.fine_tune and os.path.exists(args.pretrained_path):
         print(f'Loading pre-trained weights from: {args.pretrained_path}')
         model.load_state_dict(torch.load(args.pretrained_path, map_location=device))
 
@@ -347,11 +352,12 @@ def main_distributed(rank, world_size, args):
         epochs=args.epochs,
         lr=args.lr,
         weight_decay=args.weight_decay,
-        early_stopping_patience=args.early_stopping_patience,
+        frozen_patience=args.frozen_patience,
         patience_after_all_unfrozen=args.patience_after_all_unfrozen,
         device=device,
         saved_checkpoints_folder=args.saved_checkpoints_folder,
         saved_metrics_json_path=args.saved_metrics_json_path,
+        fine_tune=args.fine_tune,
         use_stage1_loss=args.use_stage1_loss
     )
 
