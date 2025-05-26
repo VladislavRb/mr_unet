@@ -127,7 +127,7 @@ def train(model: MultiStage_denoise | DistributedDataParallel,
         model.train()
         total_loss = 0
 
-        for noisy, clean in tqdm(train_loader, desc=f'[Epoch {epoch+1}/{epochs}]') if dist.get_rank() == 0 else train_loader:
+        for noisy, clean in tqdm(train_loader, desc=f'[Epoch {epoch+1}/{epochs}]'):
             noisy = torch.tensor(noisy, dtype=torch.float32).to(device)
             clean = torch.tensor(clean, dtype=torch.float32).to(device)
 
@@ -147,13 +147,12 @@ def train(model: MultiStage_denoise | DistributedDataParallel,
             total_loss += loss.item()
 
         avg_train_loss = total_loss / len(train_loader)
-        if dist.get_rank() == 0:
-            print(f'Train Loss: {avg_train_loss:.4f}')
+        print(f'Train Loss: {avg_train_loss:.4f}')
 
         model.eval()
         total_val_loss = 0
         with torch.no_grad():
-            for noisy, clean in tqdm(val_loader) if dist.get_rank() == 0 else val_loader:
+            for noisy, clean in tqdm(val_loader):
                 noisy = torch.tensor(noisy, dtype=torch.float32).to(device)
                 clean = torch.tensor(clean, dtype=torch.float32).to(device)
 
@@ -164,15 +163,13 @@ def train(model: MultiStage_denoise | DistributedDataParallel,
                 total_val_loss += loss.item()
 
         avg_val_loss = total_val_loss / len(val_loader)
-        if dist.get_rank() == 0:
-            print(f'Val Loss: {avg_val_loss:.4f}')
+        print(f'Val Loss: {avg_val_loss:.4f}')
 
         if avg_val_loss < best_val_loss:
             best_val_loss = avg_val_loss
-            if dist.get_rank() == 0:
-                checkpoint_filepath = os.path.join(saved_checkpoints_folder, f'checkpoint_{saved_checkpoint_counter}.pth')
-                torch.save(model.state_dict(), checkpoint_filepath)
-                print(f'Saved best model → {checkpoint_filepath}')
+            checkpoint_filepath = os.path.join(saved_checkpoints_folder, f'checkpoint_{saved_checkpoint_counter}.pth')
+            torch.save(model.state_dict(), checkpoint_filepath)
+            print(f'Saved best model → {checkpoint_filepath}')
 
             patience_counter = 0
             final_patience_counter = 0
@@ -204,13 +201,11 @@ def train(model: MultiStage_denoise | DistributedDataParallel,
             'val_loss': avg_val_loss,
             'learning_rate': optimizer.param_groups[0]["lr"],
             'best_val_loss_so_far': best_val_loss,
-            'unfrozen_blocks': current_unfreeze_index,
-            'rank': dist.get_rank()
+            'unfrozen_blocks': current_unfreeze_index
         })
 
-        if dist.get_rank() == 0:
-            with open(saved_metrics_json_path, 'w') as f:
-                json.dump(metrics_history, f, indent=2)
+        with open(saved_metrics_json_path, 'w') as f:
+            json.dump(metrics_history, f, indent=2)
 
 
 def parse_args():
