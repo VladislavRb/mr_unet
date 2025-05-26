@@ -293,80 +293,82 @@ def main(args):
 
 
 def main_distributed(rank, world_size, args):
-    print(args)
+    try:
+        dist.init_process_group(backend='nccl' if torch.cuda.is_available() else 'gloo',
+                                init_method='env://',
+                                world_size=world_size,
+                                rank=rank)
 
-    dist.init_process_group(backend='nccl' if torch.cuda.is_available() else 'gloo',
-                            init_method='env://',
-                            world_size=world_size,
-                            rank=rank)
+        device = torch.device(f'cuda:{rank}' if torch.cuda.is_available() else 'cpu')
+        is_cuda = device.type == 'cuda'
+        torch.cuda.set_device(device) if is_cuda else None
 
-    device = torch.device(f'cuda:{rank}' if torch.cuda.is_available() else 'cpu')
-    is_cuda = device.type == 'cuda'
-    torch.cuda.set_device(device) if is_cuda else None
+        train_set = MRSpectrogramDatasetLoader(
+            noisy_dir=args.train_dataset_noisy_dir,
+            clean_dir=args.train_dataset_clean_dir,
+            segment_frames=args.segment_frames,
+            hop_frames=args.hop_frames,
+            pad_to_full_chunk=False
+        )
 
-    train_set = MRSpectrogramDatasetLoader(
-        noisy_dir=args.train_dataset_noisy_dir,
-        clean_dir=args.train_dataset_clean_dir,
-        segment_frames=args.segment_frames,
-        hop_frames=args.hop_frames,
-        pad_to_full_chunk=False
-    )
+        val_set = MRSpectrogramDatasetLoader(
+            noisy_dir=args.val_dataset_noisy_dir,
+            clean_dir=args.val_dataset_clean_dir,
+            segment_frames=args.segment_frames,
+            hop_frames=args.hop_frames,
+            pad_to_full_chunk=False
+        )
 
-    val_set = MRSpectrogramDatasetLoader(
-        noisy_dir=args.val_dataset_noisy_dir,
-        clean_dir=args.val_dataset_clean_dir,
-        segment_frames=args.segment_frames,
-        hop_frames=args.hop_frames,
-        pad_to_full_chunk=False
-    )
+        train_sampler = torch.utils.data.distributed.DistributedSampler(train_set,
+                                                                        num_replicas=world_size,
+                                                                        rank=rank,
+                                                                        shuffle=True)
+        val_sampler = torch.utils.data.distributed.DistributedSampler(val_set,
+                                                                      num_replicas=world_size,
+                                                                      rank=rank,
+                                                                      shuffle=False)
 
-    train_sampler = torch.utils.data.distributed.DistributedSampler(train_set,
-                                                                    num_replicas=world_size,
-                                                                    rank=rank,
-                                                                    shuffle=True)
-    val_sampler = torch.utils.data.distributed.DistributedSampler(val_set,
-                                                                  num_replicas=world_size,
-                                                                  rank=rank,
-                                                                  shuffle=False)
+        train_loader = DataLoader(train_set,
+                                  batch_size=args.batch_size,
+                                  sampler=train_sampler,
+                                  pin_memory=is_cuda)
+        val_loader = DataLoader(val_set,
+                                batch_size=args.batch_size,
+                                sampler=val_sampler,
+                                pin_memory=is_cuda)
 
-    train_loader = DataLoader(train_set,
-                              batch_size=args.batch_size,
-                              sampler=train_sampler,
-                              pin_memory=is_cuda,
-                              num_workers=4)
-    val_loader = DataLoader(val_set,
-                            batch_size=args.batch_size,
-                            sampler=val_sampler,
-                            pin_memory=is_cuda,
-                            num_workers=2)
+        unet_args = get_unet_args()
+        model = MultiStage_denoise(unet_args=unet_args)
 
-    unet_args = get_unet_args()
-    model = MultiStage_denoise(unet_args=unet_args)
+        if args.fine_tune and os.path.exists(args.pretrained_path):
+            print(f'Loading pre-trained weights from: {args.pretrained_path}')
+            model.load_state_dict(torch.load(args.pretrained_path, map_location=device))
 
-    if args.fine_tune and os.path.exists(args.pretrained_path):
-        print(f'Loading pre-trained weights from: {args.pretrained_path}')
-        model.load_state_dict(torch.load(args.pretrained_path, map_location=device))
+        model.to(device)
+        model = DistributedDataParallel(model, device_ids=[rank] if is_cuda else None, find_unused_parameters=True)
 
-    model.to(device)
-    model = DistributedDataParallel(model, device_ids=[rank] if is_cuda else None, find_unused_parameters=True)
+        train(
+            model=model,
+            train_loader=train_loader,
+            val_loader=val_loader,
+            epochs=args.epochs,
+            lr=args.lr,
+            weight_decay=args.weight_decay,
+            frozen_patience=args.frozen_patience,
+            patience_after_all_unfrozen=args.patience_after_all_unfrozen,
+            device=device,
+            saved_checkpoints_folder=args.saved_checkpoints_folder,
+            saved_metrics_json_path=args.saved_metrics_json_path,
+            fine_tune=args.fine_tune,
+            use_stage1_loss=args.use_stage1_loss
+        )
 
-    train(
-        model=model,
-        train_loader=train_loader,
-        val_loader=val_loader,
-        epochs=args.epochs,
-        lr=args.lr,
-        weight_decay=args.weight_decay,
-        frozen_patience=args.frozen_patience,
-        patience_after_all_unfrozen=args.patience_after_all_unfrozen,
-        device=device,
-        saved_checkpoints_folder=args.saved_checkpoints_folder,
-        saved_metrics_json_path=args.saved_metrics_json_path,
-        fine_tune=args.fine_tune,
-        use_stage1_loss=args.use_stage1_loss
-    )
-
-    dist.destroy_process_group()
+        dist.destroy_process_group()
+    except Exception as e:
+        import traceback
+        print(f"[RANK {rank}] Exception:")
+        traceback.print_exc()
+        raise e
 
 
 if __name__ == "__main__":
