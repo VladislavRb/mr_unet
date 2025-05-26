@@ -342,7 +342,7 @@ def main_distributed(rank, world_size, args):
 
         if args.fine_tune and os.path.exists(args.pretrained_path):
             print(f'Loading pre-trained weights from: {args.pretrained_path}')
-            model.load_state_dict(torch.load(args.pretrained_path, map_location=device))
+            model.load_state_dict(torch.load(args.pretrained_path, map_location=device, weights_only=True))
 
         model.to(device)
         model = DistributedDataParallel(model, device_ids=[rank] if is_cuda else None, find_unused_parameters=True)
