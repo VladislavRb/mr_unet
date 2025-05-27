@@ -93,7 +93,8 @@ def train(model: MultiStage_denoise | DistributedDataParallel,
           saved_checkpoints_folder: str,
           saved_metrics_json_path: str,
           fine_tune: bool,
-          use_stage1_loss: bool = True):
+          use_stage1_loss: bool = True,
+          saved_checkpoint_counter=0):
     model_ = unwrap_model(model)
     frozen_blocks = freeze_encoder_blocks(model_, freeze_until_idx=3 if fine_tune else 0)
 
@@ -119,11 +120,23 @@ def train(model: MultiStage_denoise | DistributedDataParallel,
     patience_counter = 0
     final_patience_counter = 0
     current_unfreeze_index = 0
-    saved_checkpoint_counter = 0
 
+    start_epoch = 0
     metrics_history = []
 
-    for epoch in range(epochs):
+    if os.path.exists(saved_metrics_json_path):
+        with open(saved_metrics_json_path, 'r') as f:
+            metrics_history = json.load(f)
+
+        last_metrics = metrics_history[-1]
+
+        start_epoch = last_metrics.epoch
+        for g in optimizer.param_groups:
+            g['lr'] = last_metrics.learning_rate
+        best_val_loss = last_metrics.best_val_loss_so_far
+        current_unfreeze_index = last_metrics.unfrozen_blocks
+
+    for epoch in range(start_epoch, epochs):
         model.train()
         total_loss = 0
 
@@ -265,7 +278,26 @@ def main(args):
     unet_args = get_unet_args()
     model = MultiStage_denoise(unet_args=unet_args)
 
-    if args.fine_tune and os.path.exists(args.pretrained_path):
+    saved_checkpoint_counter = 0
+    if os.path.exists(args.saved_checkpoints_folder):
+        pth_ext = '.pth'
+        latest_checkpoint_counter = -1
+        latest_checkpoint_full_path = None
+
+        for checkpoint_filename in os.listdir(args.saved_checkpoints_folder):
+            if not checkpoint_filename.endswith(pth_ext):
+                continue
+
+            checkpoint_counter = int(checkpoint_filename[:-len(pth_ext)].split('_')[-1])
+            if checkpoint_counter > latest_checkpoint_counter:
+                latest_checkpoint_counter = checkpoint_counter
+                latest_checkpoint_full_path = os.path.join(args.saved_checkpoints_folder, checkpoint_filename)
+
+        if latest_checkpoint_full_path is not None:
+            print(f'Continuing training from checkpoint {latest_checkpoint_full_path}')
+            saved_checkpoint_counter = latest_checkpoint_counter + 1
+            model.load_state_dict(torch.load(latest_checkpoint_full_path, map_location=device))
+    elif args.fine_tune and os.path.exists(args.pretrained_path):
         print(f'Loading pre-trained weights from: {args.pretrained_path}')
         model.load_state_dict(torch.load(args.pretrained_path, map_location=device))
 
@@ -283,7 +315,8 @@ def main(args):
         saved_checkpoints_folder=args.saved_checkpoints_folder,
         saved_metrics_json_path=args.saved_metrics_json_path,
         fine_tune=args.fine_tune,
-        use_stage1_loss=args.use_stage1_loss
+        use_stage1_loss=args.use_stage1_loss,
+        saved_checkpoint_counter=saved_checkpoint_counter
     )
 
 
