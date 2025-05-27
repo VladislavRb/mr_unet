@@ -130,11 +130,11 @@ def train(model: MultiStage_denoise | DistributedDataParallel,
 
         last_metrics = metrics_history[-1]
 
-        start_epoch = last_metrics.epoch
+        start_epoch = last_metrics['epoch']
         for g in optimizer.param_groups:
-            g['lr'] = last_metrics.learning_rate
-        best_val_loss = last_metrics.best_val_loss_so_far
-        current_unfreeze_index = last_metrics.unfrozen_blocks
+            g['lr'] = last_metrics['learning_rate']
+        best_val_loss = last_metrics['best_val_loss_so_far']
+        current_unfreeze_index = last_metrics['unfrozen_blocks']
 
     for epoch in range(start_epoch, epochs):
         model.train()
